@@ -42,6 +42,26 @@ logging.basicConfig(
 )
 log = logging.getLogger("webshare-bot")
 
+# ==================== PROGRESS BAR ====================
+
+def make_progress_bar(percent: int) -> str:
+    filled = int(percent / 10)
+    empty = 10 - filled
+    bar = "█" * filled + "░" * empty
+    return f"[{bar}] {percent}%"
+
+async def update_progress(query, percent: int, status: str):
+    bar = make_progress_bar(percent)
+    text = (
+        f"⚙️ *Processing...*\n\n"
+        f"`{bar}`\n\n"
+        f"📌 {status}"
+    )
+    try:
+        await query.edit_message_text(text, parse_mode="Markdown")
+    except Exception:
+        pass
+
 # ==================== HELPERS ====================
 
 def load_accounts() -> dict:
@@ -101,7 +121,7 @@ class AsyncScraper:
 
 # ==================== CAPTCHA ====================
 
-async def solve_recaptcha(session: AsyncScraper) -> str | None:
+async def solve_recaptcha(session: AsyncScraper, query=None) -> str | None:
     log.info("[AZCAPTCHA] Solving reCAPTCHA...")
     submit_data = {
         "key": AZCAPTCHA_API_KEY,
@@ -123,6 +143,8 @@ async def solve_recaptcha(session: AsyncScraper) -> str | None:
         log.error(f"[AZCAPTCHA] Submit error: {e}")
         return None
 
+    # Animate progress 50% -> 70% while polling captcha
+    progress = 50
     for i in range(60):
         await asyncio.sleep(5)
         try:
@@ -135,10 +157,16 @@ async def solve_recaptcha(session: AsyncScraper) -> str | None:
             data = resp.json()
             if data.get("status") == 1:
                 log.info("[AZCAPTCHA] Solved!")
+                if query:
+                    await update_progress(query, 75, "Captcha solved! Registering account...")
                 return data["request"]
             if "CAPCHA_NOT_READY" not in str(data.get("request", "")):
                 log.warning(f"[AZCAPTCHA] Error: {data}")
                 return None
+            # Slowly tick bar while waiting
+            if query and progress < 70:
+                progress += 2
+                await update_progress(query, progress, "Solving captcha... please wait ☕")
         except Exception as e:
             log.error(f"[AZCAPTCHA] Poll error: {e}")
     log.error("[AZCAPTCHA] Timeout")
@@ -153,8 +181,8 @@ async def create_nullz_email() -> tuple[str, str]:
     log.info(f"[NULLZ] Generated: {email}")
     return email, password
 
-async def register_webshare(session: AsyncScraper, email: str, password: str) -> dict | None:
-    token = await solve_recaptcha(session)
+async def register_webshare(session: AsyncScraper, email: str, password: str, query=None) -> dict | None:
+    token = await solve_recaptcha(session, query)
     if not token:
         return None
 
@@ -240,11 +268,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     if query.data == "auto":
-        await query.edit_message_text("⏳ Starting automatic registration...\nThis may take 1-3 minutes.")
+        await update_progress(query, 0, "Starting up...")
         await run_auto(query, context)
 
     elif query.data == "manual":
-        await query.edit_message_text("📧 Please send your *email* address:")
+        await query.edit_message_text("📧 Please send your *email* address:", parse_mode="Markdown")
         return WAITING_EMAIL
 
     elif query.data == "proxies":
@@ -254,22 +282,36 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def run_auto(query, context):
     session = AsyncScraper()
     try:
-        email, password = await create_nullz_email()
-        await query.edit_message_text(f"📧 Generated email: `{email}`\n\nSolving captcha + registering...", parse_mode="Markdown")
+        # 0% — init
+        await update_progress(query, 0, "Initializing...")
+        await asyncio.sleep(0.5)
 
-        acc = await register_webshare(session, email, password)
+        # 25% — email generated (hidden from user)
+        await update_progress(query, 25, "Generating account details...")
+        email, password = await create_nullz_email()
+
+        # 50% — captcha submitted
+        await update_progress(query, 50, "Submitting captcha request...")
+
+        acc = await register_webshare(session, email, password, query)
         if not acc:
             await query.edit_message_text("❌ Registration failed. Please try again later.")
             return
+
+        # 90% — fetching proxies
+        await update_progress(query, 90, "Fetching your proxies...")
 
         data = load_accounts()
         data["accounts"].append(acc)
         data["accounts"] = data["accounts"][-20:]
         save_accounts(data)
 
-        await query.edit_message_text(f"✅ Account created!\nEmail: `{email}`\n\nFetching proxies...", parse_mode="Markdown")
-
         proxies = await fetch_proxies(session, acc["token"], 10)
+
+        # 100% — done
+        await update_progress(query, 100, "All done! ✅")
+        await asyncio.sleep(0.5)
+
         if proxies:
             save_proxies_to_file(proxies, email)
             text = f"✅ *Success!* Got {len(proxies)} proxies:\n\n"
@@ -301,7 +343,7 @@ async def receive_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Password too short. Send again:")
         return WAITING_PASSWORD
 
-    await update.message.reply_text(f"⏳ Registering `{email}`...\nSolving captcha, please wait (1-5 min)...", parse_mode="Markdown")
+    await update.message.reply_text("⏳ Registering...\nSolving captcha, please wait (1-5 min)...", parse_mode="Markdown")
 
     session = AsyncScraper()
     try:
@@ -345,7 +387,7 @@ async def run_get_proxies(query, context):
     try:
         proxies = await fetch_proxies(session, acc["token"], 10)
         if proxies:
-            text = f"✅ Proxies from `{acc['email']}`:\n\n"
+            text = f"✅ *Here are your proxies:*\n\n"
             text += "\n".join([f"`{p}`" for p in proxies])
             await query.edit_message_text(text, parse_mode="Markdown")
         else:
