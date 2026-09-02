@@ -20,7 +20,7 @@ from telegram.ext import (
 )
 
 # ==================== CONFIG ====================
-BOT_TOKEN = "8941757041:AAFAFIqPZLA_W0cBD8wovplqngQ7vnMVwkw"
+BOT_TOKEN = "8630173255:AAGcWapFty2YeFXfrrX2dBYw-Q77xVrqx1I"
 AZCAPTCHA_API_KEY = "26e79225265a7d7430f86f90888dc4dd7115dd98"
 AZCAPTCHA_API_URL = "https://azcaptcha.com/in.php"
 AZCAPTCHA_RESULT_URL = "https://azcaptcha.com/res.php"
